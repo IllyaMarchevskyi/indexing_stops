@@ -1,0 +1,5 @@
+other/
+cache/
+.venv/
+__pycache__/
+stop-match-decisions.json
