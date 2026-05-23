@@ -19,7 +19,7 @@ import webbrowser
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
     from pyppeteer import launch
@@ -232,6 +232,37 @@ def save_decisions(path: Path, decisions: Dict[str, Dict[str, object]]) -> None:
         json.dump(decisions, handle, ensure_ascii=False, indent=2)
 
 
+def merge_decisions(
+    base_path: Path,
+    incoming_path: Path,
+) -> Tuple[Dict[str, Dict[str, object]], int, int, List[str]]:
+    base_decisions = load_decisions(base_path)
+    incoming_decisions = load_decisions(incoming_path)
+
+    added_count = 0
+    kept_count = 0
+    conflicts: List[str] = []
+
+    for decision_key, incoming_decision in incoming_decisions.items():
+        existing_decision = base_decisions.get(decision_key)
+        if existing_decision is None:
+            base_decisions[decision_key] = incoming_decision
+            added_count += 1
+            continue
+
+        existing_status = str(existing_decision.get("status", ""))
+        incoming_status = str(incoming_decision.get("status", ""))
+        if existing_status == incoming_status:
+            kept_count += 1
+            continue
+
+        conflicts.append(
+            f"{decision_key}: основний статус = {existing_status!r}, новий статус = {incoming_status!r}"
+        )
+
+    return base_decisions, added_count, kept_count, conflicts
+
+
 def parse_point_wkt(geometry: str) -> Optional[Tuple[float, float]]:
     match = re.match(r"POINT\s*\(\s*([0-9\.\-]+)\s+([0-9\.\-]+)\s*\)", geometry.strip(), re.IGNORECASE)
     if not match:
@@ -287,7 +318,7 @@ def write_preview_map(output_path: Path, stop_name: str, geometry: str) -> Optio
   <div id="map"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const map = L.map('map').setView([{lat}, {lon}], 18);
+    const map = L.map('map').setView([{lat}, {lon}], 16);
     L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap contributors'
@@ -1428,10 +1459,13 @@ def run_matching(
     preview_browser_app: Optional[str],
     eway_browser_app: Optional[str],
     start_osm_row_id: int,
+    review_osm_row_ids: Optional[Set[str]] = None,
+    review_mismatches_path: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]], Dict[str, Dict[str, object]]]:
     osm_stops = build_osm_stops(osm_rows)
     route_contexts = build_route_contexts(route_rows, route_stop_col)
     decisions = load_decisions(decisions_path)
+    review_mismatches = load_decisions(review_mismatches_path) if review_mismatches_path else {}
     route_assignments = rebuild_route_assignments(decisions)
     revisit_state: Dict[str, Tuple[Optional[str], Optional[str], List[int]]] = {}
 
@@ -1443,10 +1477,25 @@ def run_matching(
             stop_index += 1
             continue
         decision_key = str(stop.osm_row_id)
-        progress_label = f"Переглянуто: {stop_index + 1} / {total_stops}"
-        if decision_key in decisions:
+        if review_osm_row_ids is not None and decision_key not in review_osm_row_ids:
             stop_index += 1
             continue
+        progress_label = f"Переглянуто: {stop_index + 1} / {total_stops}"
+        existing_decision = decisions.get(decision_key)
+        if existing_decision is not None:
+            existing_status = str(existing_decision.get("status", ""))
+            should_revisit_existing = existing_status == "skipped" or (
+                review_osm_row_ids is not None and decision_key in review_osm_row_ids
+            )
+            if not should_revisit_existing:
+                stop_index += 1
+                continue
+            revisit_state[decision_key] = (
+                str(existing_decision.get("search_name") or stop.name),
+                str(existing_decision.get("candidate_name")) if existing_decision.get("candidate_name") is not None else None,
+                [int(route_row_id) for route_row_id in existing_decision.get("route_row_ids", [])],
+            )
+            decisions.pop(decision_key, None)
 
         context_by_name = build_name_to_unassigned_contexts(
             route_rows=route_rows,
@@ -1510,6 +1559,9 @@ def run_matching(
                     "search_name_changed": search_name_changed,
                 }
                 save_decisions(decisions_path, decisions)
+                if review_mismatches_path and decision_key in review_mismatches:
+                    review_mismatches.pop(decision_key, None)
+                    save_decisions(review_mismatches_path, review_mismatches)
                 break
 
             if interaction.status == "skipped":
@@ -1523,6 +1575,9 @@ def run_matching(
                     "route_row_ids": [],
                 }
                 save_decisions(decisions_path, decisions)
+                if review_mismatches_path and decision_key in review_mismatches:
+                    review_mismatches.pop(decision_key, None)
+                    save_decisions(review_mismatches_path, review_mismatches)
                 break
 
             if not interaction.selected_route_row_ids:
@@ -1536,6 +1591,9 @@ def run_matching(
                     "route_row_ids": [],
                 }
                 save_decisions(decisions_path, decisions)
+                if review_mismatches_path and decision_key in review_mismatches:
+                    review_mismatches.pop(decision_key, None)
+                    save_decisions(review_mismatches_path, review_mismatches)
                 break
 
             for route_row_id in interaction.selected_route_row_ids:
@@ -1554,6 +1612,9 @@ def run_matching(
                 "route_row_ids": interaction.selected_route_row_ids,
             }
             save_decisions(decisions_path, decisions)
+            if review_mismatches_path and decision_key in review_mismatches:
+                review_mismatches.pop(decision_key, None)
+                save_decisions(review_mismatches_path, review_mismatches)
             break
 
         if advance_to_next:
@@ -1600,6 +1661,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default="stop-match-decisions.json",
         help="JSON cache for reviewed OSM rows and assigned route row ids.",
     )
+    parser.add_argument(
+        "--merge-decisions-from",
+        default="",
+        help="Merge another stop-match-decisions.json into --decisions and exit.",
+    )
+    parser.add_argument(
+        "--review-mismatches",
+        nargs="?",
+        const="stop-match-review-mismatches.json",
+        default="",
+        help="Path to stop-match-review-mismatches.json; if set, revisit only these OSM rows.",
+    )
     parser.add_argument("--candidate-limit", type=int, default=7, help="How many similar route stop names to show.")
     parser.add_argument(
         "--start-osm-row-id",
@@ -1644,12 +1717,36 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     PYPPETEER_BROWSER_MANAGER.executable_path = args.pyppeteer_executable_path or None
 
+    if args.merge_decisions_from:
+        merged_decisions, added_count, kept_count, conflicts = merge_decisions(
+            base_path=Path(args.decisions),
+            incoming_path=Path(args.merge_decisions_from),
+        )
+        save_decisions(Path(args.decisions), merged_decisions)
+        print(f"Додано нових записів: {added_count}")
+        print(f"Пропущено через однаковий status: {kept_count}")
+        if conflicts:
+            print("Конфлікти status:")
+            for conflict in conflicts:
+                print(f"  {conflict}")
+        else:
+            print("Конфліктів status немає.")
+        return 0
+
     osm_rows = read_csv_rows(Path(args.osm))
     route_rows = read_csv_rows(Path(args.routes))
     if not route_rows:
         raise SystemExit("routes CSV is empty")
     if args.route_stop_col not in route_rows[0]:
         raise SystemExit(f'Column "{args.route_stop_col}" not found in {args.routes}')
+
+    review_osm_row_ids: Optional[Set[str]] = None
+    review_mismatches_path: Optional[Path] = None
+    if args.review_mismatches:
+        review_mismatches_path = Path(args.review_mismatches)
+        review_decisions = load_decisions(review_mismatches_path)
+        review_osm_row_ids = {str(key) for key in review_decisions.keys()}
+        print(f"Повторний перегляд тільки для OSM row id: {len(review_osm_row_ids)}")
 
     preview_map_path = Path(args.preview_map) if args.preview_map else None
     output_rows, osm_no_candidates, route_unmatched, decisions = run_matching(
@@ -1664,6 +1761,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         preview_browser_app=args.preview_browser_app or None,
         eway_browser_app=args.eway_browser_app or None,
         start_osm_row_id=args.start_osm_row_id,
+        review_osm_row_ids=review_osm_row_ids,
+        review_mismatches_path=review_mismatches_path,
     )
 
     write_csv(Path(args.output), output_rows, list(output_rows[0].keys()))

@@ -24,18 +24,18 @@
 </head>
 <body>
   <div class="info">
-    <div class="title">Станція метро «Лук'янівська»</div>
-    <div>POINT (30.4822267 50.4625391)</div>
+    <div class="title">АДМ</div>
+    <div>POINT (30.4483937 50.4900565)</div>
   </div>
   <div id="map"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const map = L.map('map').setView([50.4625391, 30.4822267], 18);
+    const map = L.map('map').setView([50.4900565, 30.4483937], 16);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
-    L.marker([50.4625391, 30.4822267]).addTo(map).bindPopup("\u0421\u0442\u0430\u043d\u0446\u0456\u044f \u043c\u0435\u0442\u0440\u043e \u00ab\u041b\u0443\u043a'\u044f\u043d\u0456\u0432\u0441\u044c\u043a\u0430\u00bb").openPopup();
+    L.marker([50.4900565, 30.4483937]).addTo(map).bindPopup("\u0410\u0414\u041c").openPopup();
   </script>
 </body>
 </html>
