@@ -1469,6 +1469,14 @@ def run_matching(
     review_mismatches = load_decisions(review_mismatches_path) if review_mismatches_path else {}
     route_assignments = rebuild_route_assignments(decisions)
     revisit_state: Dict[str, Tuple[Optional[str], Optional[str], List[int]]] = {}
+    review_index_by_key: Dict[str, int] = {}
+    if review_osm_row_ids is not None:
+        ordered_review_keys = [
+            str(stop.osm_row_id)
+            for stop in osm_stops
+            if str(stop.osm_row_id) in review_osm_row_ids and stop.osm_row_id >= start_osm_row_id
+        ]
+        review_index_by_key = {key: index + 1 for index, key in enumerate(ordered_review_keys)}
 
     total_stops = len(osm_stops)
     stop_index = 0
@@ -1481,7 +1489,13 @@ def run_matching(
         if review_osm_row_ids is not None and decision_key not in review_osm_row_ids:
             stop_index += 1
             continue
-        progress_label = f"Переглянуто: {stop_index + 1} / {total_stops}"
+        if review_osm_row_ids is not None:
+            progress_label = (
+                f"OSM row id: {decision_key} | "
+                f"Вибрано: {review_index_by_key.get(decision_key, 0)} / {len(review_index_by_key)}"
+            )
+        else:
+            progress_label = f"Переглянуто: {stop_index + 1} / {total_stops}"
         existing_decision = decisions.get(decision_key)
         if existing_decision is not None:
             existing_status = str(existing_decision.get("status", ""))
