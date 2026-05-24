@@ -1461,6 +1461,7 @@ def run_matching(
     start_osm_row_id: int,
     review_osm_row_ids: Optional[Set[str]] = None,
     review_mismatches_path: Optional[Path] = None,
+    revisit_skipped: bool = False,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]], Dict[str, Dict[str, object]]]:
     osm_stops = build_osm_stops(osm_rows)
     route_contexts = build_route_contexts(route_rows, route_stop_col)
@@ -1484,7 +1485,7 @@ def run_matching(
         existing_decision = decisions.get(decision_key)
         if existing_decision is not None:
             existing_status = str(existing_decision.get("status", ""))
-            should_revisit_existing = existing_status == "skipped" or (
+            should_revisit_existing = (revisit_skipped and existing_status == "skipped") or (
                 review_osm_row_ids is not None and decision_key in review_osm_row_ids
             )
             if not should_revisit_existing:
@@ -1673,6 +1674,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default="",
         help="Path to stop-match-review-mismatches.json; if set, revisit only these OSM rows.",
     )
+    parser.add_argument(
+        "--revisit-skipped",
+        action="store_true",
+        help="Reopen decisions with status='skipped' instead of skipping them.",
+    )
     parser.add_argument("--candidate-limit", type=int, default=7, help="How many similar route stop names to show.")
     parser.add_argument(
         "--start-osm-row-id",
@@ -1763,6 +1769,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         start_osm_row_id=args.start_osm_row_id,
         review_osm_row_ids=review_osm_row_ids,
         review_mismatches_path=review_mismatches_path,
+        revisit_skipped=args.revisit_skipped,
     )
 
     write_csv(Path(args.output), output_rows, list(output_rows[0].keys()))
