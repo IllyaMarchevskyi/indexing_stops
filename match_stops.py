@@ -1675,6 +1675,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Path to stop-match-review-mismatches.json; if set, revisit only these OSM rows.",
     )
     parser.add_argument(
+        "--revisit-osm-row-ids",
+        nargs="+",
+        default=[],
+        help="Explicit list of OSM row ids to revisit, e.g. --revisit-osm-row-ids 12 34 56.",
+    )
+    parser.add_argument(
         "--revisit-skipped",
         action="store_true",
         help="Reopen decisions with status='skipped' instead of skipping them.",
@@ -1748,10 +1754,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     review_osm_row_ids: Optional[Set[str]] = None
     review_mismatches_path: Optional[Path] = None
+    if args.revisit_osm_row_ids:
+        review_osm_row_ids = {str(value) for value in args.revisit_osm_row_ids}
+        print(f"Повторний перегляд явного списку OSM row id: {len(review_osm_row_ids)}")
     if args.review_mismatches:
         review_mismatches_path = Path(args.review_mismatches)
         review_decisions = load_decisions(review_mismatches_path)
-        review_osm_row_ids = {str(key) for key in review_decisions.keys()}
+        mismatch_ids = {str(key) for key in review_decisions.keys()}
+        review_osm_row_ids = mismatch_ids if review_osm_row_ids is None else (review_osm_row_ids | mismatch_ids)
         print(f"Повторний перегляд тільки для OSM row id: {len(review_osm_row_ids)}")
 
     preview_map_path = Path(args.preview_map) if args.preview_map else None
